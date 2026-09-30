@@ -5,20 +5,24 @@
 -- Nothing is networked: other players never see the shell.
 
 local BASE = vec3(-2200.0, -4200.0, 1100.0)
+ShellBase = BASE -- portals.lua measures the way out from this point
 local KEY = { left = 174, right = 175, up = 172, down = 173, q = 44, e = 38,
-              wheelUp = 241, wheelDown = 242, enter = 191, back = 194, back2 = 177, copy = 26 }
+              wheelUp = 241, wheelDown = 242, enter = 191, back = 194, back2 = 177, copy = 26, mark = 47 }
 
 local active, walking = false, false
 local list, idx = {}, 1
 local obj, hash, cam, back, wasGod
 local center, minZ, radius, heading, tilt = BASE, BASE.z, 20.0, 45.0, 0.35
+local pick -- set while building a portal: { name, label, entrance = vec4 }
 
 local function label()
     local m = list[idx] or '?'
     if walking then
-        lib.showTextUI(('**%d / %d**  \n%s  \n  \n[Enter] back to the view  \n[C] copy name  \n[Backspace] leave'):format(idx, #list, m), { position = 'left-center' })
+        local extra = pick and '  \n**[G] the way out is here**' or ''
+        lib.showTextUI(('**%d / %d**  \n%s  \n  \n[Enter] back to the view  \n[C] copy name  \n[Backspace] leave%s'):format(idx, #list, m, extra), { position = 'left-center' })
     else
-        lib.showTextUI(('**%d / %d**  \n%s  \n  \n[Left Right] previous / next  \n[Up Down] jump 10  \n[Mouse or Q E] turn  \n[Wheel] zoom  \n[Enter] walk inside  \n[C] copy name  \n[Backspace] leave'):format(idx, #list, m), { position = 'left-center' })
+        local head = pick and ('**Portal: %s**  \nPick a shell, then Enter to walk in  \n'):format(pick.label) or ''
+        lib.showTextUI((head .. '**%d / %d**  \n%s  \n  \n[Left Right] previous / next  \n[Up Down] jump 10  \n[Mouse or Q E] turn  \n[Wheel] zoom  \n[Enter] walk inside  \n[C] copy name  \n[Backspace] leave'):format(idx, #list, m), { position = 'left-center' })
     end
 end
 
@@ -111,6 +115,21 @@ local function stop()
     SetEntityVisible(ped, true, false)
     FreezeEntityPosition(ped, false)
     if not wasGod then SetEntityInvincible(ped, false) end
+    pick = nil
+end
+
+local function markExit()
+    local m, ped = list[idx], cache.ped
+    local p = GetEntityCoords(ped)
+    local offset = p - BASE
+    local ok, err = lib.callback.await('dps-shellbrowser:savePortal', false, {
+        name = pick.name, label = pick.label, shell = m,
+        entrance = { x = pick.entrance.x, y = pick.entrance.y, z = pick.entrance.z, h = pick.entrance.w },
+        exit = { x = offset.x, y = offset.y, z = offset.z, h = GetEntityHeading(ped) },
+    })
+    if not ok then return lib.notify({ type = 'error', description = err or 'Could not save the portal' }) end
+    lib.notify({ type = 'success', description = ('Portal "%s" saved with %s. Press E at the door to try it.'):format(pick.label, m) })
+    stop()
 end
 
 local function copyName()
@@ -129,7 +148,9 @@ local function loop()
             DisableControlAction(0, KEY.back, true)
             DisableControlAction(0, KEY.back2, true)
             DisableControlAction(0, KEY.copy, true)
+            DisableControlAction(0, KEY.mark, true)
             if IsDisabledControlJustPressed(0, KEY.enter) then walk(false)
+            elseif pick and IsDisabledControlJustPressed(0, KEY.mark) then markExit()
             elseif IsDisabledControlJustPressed(0, KEY.back) or IsDisabledControlJustPressed(0, KEY.back2) then stop()
             elseif IsDisabledControlJustPressed(0, KEY.copy) then copyName() end
             local now = GetGameTimer()
@@ -162,7 +183,7 @@ local function loop()
     end
 end
 
-RegisterCommand('shells', function(_, args)
+local function open(args, portal)
     if active then return stop() end
     if cache.vehicle then return lib.notify({ type = 'error', description = 'Get out of the vehicle first' }) end
     local allowed, shells = lib.callback.await('dps-shellbrowser:open', false)
@@ -185,6 +206,10 @@ RegisterCommand('shells', function(_, args)
     local ped = cache.ped
     local p = GetEntityCoords(ped)
     back = vec4(p.x, p.y, p.z, GetEntityHeading(ped))
+    if portal then
+        portal.entrance = back
+        pick = portal
+    end
     wasGod = GetPlayerInvincible(cache.playerId)
     SetEntityInvincible(ped, true)
     active, walking = true, false
@@ -193,8 +218,40 @@ RegisterCommand('shells', function(_, args)
     RenderScriptCams(true, false, 0, true, true)
     loadShell(start)
     CreateThread(loop)
+end
+
+RegisterCommand('shells', function(_, args) open(args) end, false)
+
+-- /portal <name> [label words]  : stand at the door facing it, then pick the shell
+-- /portal delete <name>         : remove a portal
+-- /portal list                  : show all portals
+RegisterCommand('portal', function(_, args)
+    local a = args[1]
+    if not a then
+        return lib.notify({ type = 'inform', description = 'Stand at the door and type /portal name. Also: /portal list, /portal delete name' })
+    end
+    if a == 'list' then
+        local names = lib.callback.await('dps-shellbrowser:listPortals', false)
+        if not names then return lib.notify({ type = 'error', description = 'Portals are for admins' }) end
+        print('[portals] ' .. (#names > 0 and table.concat(names, ', ') or 'none'))
+        return lib.notify({ type = 'inform', description = #names > 0 and table.concat(names, ', ') or 'No portals yet' })
+    end
+    if a == 'delete' then
+        local ok, err = lib.callback.await('dps-shellbrowser:deletePortal', false, args[2])
+        return lib.notify({ type = ok and 'success' or 'error', description = ok and ('Portal ' .. args[2] .. ' removed') or err })
+    end
+    local name = a:lower()
+    if not name:match('^[%w_%-]+$') or #name > 32 then
+        return lib.notify({ type = 'error', description = 'Name: letters, numbers, - or _ only' })
+    end
+    local label = #args > 1 and table.concat(args, ' ', 2) or name
+    open({}, { name = name, label = label })
 end, false)
 
+TriggerEvent('chat:addSuggestion', '/portal', 'Make a door into a shell (admin)', {
+    { name = 'name', help = 'a short name, or list, or delete' },
+    { name = 'label', help = 'optional: words shown on the door, like Green Room' },
+})
 TriggerEvent('chat:addSuggestion', '/shells', 'Browse every housing shell (admin)', {
     { name = 'start', help = 'optional: a number or part of a shell name' },
 })
