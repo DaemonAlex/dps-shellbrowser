@@ -1,4 +1,7 @@
 -- Run from the resource folder: lua5.4 tests/run.lua [path to qs-housing main.lua]
+-- FiveM vector helpers do not exist in plain Lua; stand-ins so vendor configs load.
+local function vec(...) return { ... } end
+vec3, vec4, vector3, vector4 = vec3 or vec, vec4 or vec, vector3 or vec, vector4 or vec
 dofile('server/parse.lua')
 local fails = 0
 local function check(name, ok) print((ok and 'PASS ' or 'FAIL ') .. name); if not ok then fails = fails + 1 end end
@@ -28,7 +31,34 @@ check('exit far outside shell rejected', not ValidatePortal(with('exit', { x = 9
 check('NaN coord rejected', not ValidatePortal(with('entrance', { x = 0/0, y = 0, z = 0, h = 0 })))
 check('non-table rejected', not ValidatePortal('x'))
 
+local fsrc = [[
+Config.Furniture = {
+    ['toilet'] = { label = 'Toilet', items = {
+        [1] = { ['object'] = 'prop_ld_toilet_01', ['label'] = 'Old toilet', ['img'] = Config.ImagePath .. 'a.png' },
+        [2] = { ['object'] = 'prop_toilet_01', ['label'] = 'Toilet' },
+    } },
+    ['empty'] = { label = 'Empty', items = {} },
+}
+]]
+local cats, models = ParseFurniture(fsrc, 'nui://x/')
+check('furniture: one category with items', #cats == 1 and #cats[1].items == 2)
+check('furniture: image path joined', cats[1].items[1].img == 'nui://x/a.png')
+check('furniture: models set', models.prop_ld_toilet_01 and models.prop_toilet_01)
+check('furniture: bad file gives empty list', #ParseFurniture('this is not lua', '') == 0)
+check('furniture: file cannot reach os', #ParseFurniture('os.exit(1)', '') == 0)
+check('prop valid', ValidateProp({ model = 'prop_toilet_01', x = 1, y = 2, z = 0.5, h = 90 }, models))
+check('prop unknown model rejected', not ValidateProp({ model = 'nope', x = 1, y = 2, z = 0, h = 0 }, models))
+check('prop far away rejected', not ValidateProp({ model = 'prop_toilet_01', x = 5000, y = 2, z = 0, h = 0 }, models))
+
 local path = arg[1]
+local fpath = arg[2]
+if fpath then
+    local f = assert(io.open(fpath, 'r'))
+    local lc, lm = ParseFurniture(f:read('a'), 'nui://qs-housing/web/images/'); f:close()
+    local n = 0; for _ in pairs(lm) do n = n + 1 end
+    print(('live furniture: %d categories, %d items'):format(#lc, n))
+    check('live furniture has items', n > 0)
+end
 if path then
     local f = assert(io.open(path, 'r'))
     local live = ParseShells(f:read('a')); f:close()

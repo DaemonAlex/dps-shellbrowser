@@ -41,7 +41,10 @@ lib.callback.register('dps-shellbrowser:savePortal', function(source, d)
         if m == d.shell then known = true break end
     end
     if not known then return false, 'That shell is not in the housing list' end
-    portals[d.name] = { label = d.label, shell = d.shell, entrance = d.entrance, exit = d.exit }
+    local old = portals[d.name]
+    local keep = old and old.shell == d.shell -- same shell keeps its furniture
+    portals[d.name] = { label = d.label, shell = d.shell, entrance = d.entrance, exit = d.exit,
+                        props = keep and old.props or nil, nextId = keep and old.nextId or nil }
     save()
     lib.print.info(('%s saved portal %s -> %s'):format(GetPlayerName(source) or source, d.name, d.shell))
     return true
@@ -54,4 +57,61 @@ lib.callback.register('dps-shellbrowser:deletePortal', function(source, name)
     save()
     lib.print.info(('%s removed portal %s'):format(GetPlayerName(source) or source, name))
     return true
+end)
+
+-- Decorating: furniture pieces saved per portal, offsets from the shell spawn point.
+local MAX_PROPS = 400
+local furnitureCats, furnitureModels
+
+local function furniture()
+    if not furnitureCats then
+        furnitureCats, furnitureModels = ParseFurniture(LoadResourceFile('qs-housing', 'config/furniture.lua'), 'nui://qs-housing/web/images/')
+        local n = 0
+        for _ in pairs(furnitureModels) do n = n + 1 end
+        lib.print.info(('furniture catalogue: %d categories, %d items'):format(#furnitureCats, n))
+    end
+    return furnitureCats, furnitureModels
+end
+
+lib.callback.register('dps-shellbrowser:furniture', function(source)
+    if not IsPlayerAceAllowed(source, ACE) then return nil end
+    return (furniture())
+end)
+
+lib.callback.register('dps-shellbrowser:placeProp', function(source, name, prop, id)
+    if not IsPlayerAceAllowed(source, ACE) then return false, 'Decorating is for admins' end
+    local p = type(name) == 'string' and portals[name]
+    if not p then return false, 'No portal here' end
+    local _, models = furniture()
+    local ok, err = ValidateProp(prop, models)
+    if not ok then return false, err end
+    p.props = p.props or {}
+    local piece = { model = prop.model, x = prop.x, y = prop.y, z = prop.z, h = prop.h }
+    if id then
+        for i, q in ipairs(p.props) do
+            if q.id == id then piece.id = id; p.props[i] = piece; break end
+        end
+        if not piece.id then return false, 'That piece is gone' end
+    else
+        if #p.props >= MAX_PROPS then return false, 'This room is full (' .. MAX_PROPS .. ' pieces)' end
+        p.nextId = (p.nextId or 0) + 1
+        piece.id = p.nextId
+        p.props[#p.props + 1] = piece
+    end
+    save()
+    return true
+end)
+
+lib.callback.register('dps-shellbrowser:removeProp', function(source, name, id)
+    if not IsPlayerAceAllowed(source, ACE) then return false, 'Decorating is for admins' end
+    local p = type(name) == 'string' and portals[name]
+    if not p or not p.props then return false, 'No portal here' end
+    for i, q in ipairs(p.props) do
+        if q.id == id then
+            table.remove(p.props, i)
+            save()
+            return true
+        end
+    end
+    return false, 'That piece is gone'
 end)
