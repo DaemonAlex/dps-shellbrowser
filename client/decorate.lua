@@ -60,20 +60,66 @@ local function place(name, model, id, heading, hideEnt)
     SetModelAsNoLongerNeeded(hash)
     local mn = GetModelDimensions(hash)
     local h, lift = heading or GetEntityHeading(cache.ped), 0.0
-    lib.showTextUI('**Placing ' .. model .. '**  \n[Left click or Enter] put it here  \n[Wheel or Left Right] turn  \n[Up Down] raise / lower  \n[Backspace] cancel', { position = 'left-center' })
+    -- fine = the piece stays put and keys nudge it; starts on when moving a placed piece
+    local fine, at = false, nil
+    if hideEnt and DoesEntityExist(hideEnt) then fine, at = true, GetEntityCoords(hideEnt) end
+
+    local function help()
+        if fine then
+            lib.showTextUI('**Fine tune ' .. model .. '**  \n[Arrows] slide  \n[Page Up / Down] up / down  \n[Q E or Wheel] turn  \nHold [Shift] for big steps  \n[Tab] follow my look again  \n[Left click or Enter] save  \n[Backspace] cancel', { position = 'left-center' })
+        else
+            lib.showTextUI('**Placing ' .. model .. '**  \n[Left click or Enter] put it here  \n[Wheel or Left Right] turn  \n[Up Down] raise / lower  \n[Tab] fine tune  \n[Backspace] cancel', { position = 'left-center' })
+        end
+    end
+    help()
+
+    -- tap = one step, hold = repeat after a short pause
+    local held = {}
+    local function tap(c)
+        if not IsDisabledControlPressed(0, c) then held[c] = nil return false end
+        local now = GetGameTimer()
+        if not held[c] then held[c] = now + 300 return true end
+        if now >= held[c] then held[c] = now + 40 return true end
+        return false
+    end
 
     while busy do
         blockKeys()
-        local hit, pos = aim(ghost)
-        if hit then
-            SetEntityCoordsNoOffset(ghost, pos.x, pos.y, pos.z - mn.z + lift, false, false, false)
+        DisableControlAction(0, 21, true); DisableControlAction(0, 10, true); DisableControlAction(0, 11, true); DisableControlAction(0, 44, true)
+        local hit
+        if pressed(37) then
+            fine = not fine
+            if fine then at = GetEntityCoords(ghost) end
+            help()
         end
-        if IsDisabledControlPressed(0, K.rotL) then h = h + 2.0 end
-        if IsDisabledControlPressed(0, K.rotR) then h = h - 2.0 end
-        if pressed(K.wheelUp) then h = h + 15.0 end
-        if pressed(K.wheelDown) then h = h - 15.0 end
-        if IsDisabledControlPressed(0, K.up) then lift = lift + 0.01 end
-        if IsDisabledControlPressed(0, K.down) then lift = lift - 0.01 end
+        if fine then
+            hit = true
+            local big = IsDisabledControlPressed(0, 21)
+            local step, turn = big and 0.10 or 0.01, big and 15.0 or 1.0
+            local r = math.rad(GetGameplayCamRot(2).z)
+            local fwd, right = vec3(-math.sin(r), math.cos(r), 0.0), vec3(math.cos(r), math.sin(r), 0.0)
+            if tap(K.up) then at = at + fwd * step end
+            if tap(K.down) then at = at - fwd * step end
+            if tap(K.rotR) then at = at + right * step end
+            if tap(K.rotL) then at = at - right * step end
+            if tap(10) then at = at + vec3(0.0, 0.0, step) end
+            if tap(11) then at = at - vec3(0.0, 0.0, step) end
+            if tap(44) or pressed(K.wheelUp) then h = h + turn end
+            if tap(38) or pressed(K.wheelDown) then h = h - turn end
+            SetEntityCoordsNoOffset(ghost, at.x, at.y, at.z, false, false, false)
+        else
+            local pos
+            hit, pos = aim(ghost)
+            if hit then
+                SetEntityCoordsNoOffset(ghost, pos.x, pos.y, pos.z - mn.z + lift, false, false, false)
+            end
+            if IsDisabledControlPressed(0, K.rotL) then h = h + 2.0 end
+            if IsDisabledControlPressed(0, K.rotR) then h = h - 2.0 end
+            if pressed(K.wheelUp) then h = h + 15.0 end
+            if pressed(K.wheelDown) then h = h - 15.0 end
+            if IsDisabledControlPressed(0, K.up) then lift = lift + 0.01 end
+            if IsDisabledControlPressed(0, K.down) then lift = lift - 0.01 end
+        end
         h = h % 360.0
         SetEntityHeading(ghost, h)
 
