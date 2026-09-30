@@ -18,6 +18,16 @@ check('reads only the Config.Shells block', #r == 2 and r[1] == 'shell_a' and r[
 check('nil input gives empty list', #ParseShells(nil) == 0)
 check('no Config.Shells gives empty list', #ParseShells('Config.X = {}') == 0)
 
+local good = { name = 'greenroom', label = 'Green Room', shell = 'k4_warehouse3_shell',
+    entrance = { x = 690.36, y = 588.38, z = 131.06, h = 343.8 }, exit = { x = 3.2, y = -7.5, z = 1.1, h = 10.0 } }
+check('valid portal passes', ValidatePortal(good))
+local function with(k, v) local c = {}; for a, b in pairs(good) do c[a] = b end; c[k] = v; return c end
+check('bad name rejected', not ValidatePortal(with('name', 'green room!')))
+check('empty label rejected', not ValidatePortal(with('label', '')))
+check('exit far outside shell rejected', not ValidatePortal(with('exit', { x = 900, y = 0, z = 0, h = 0 })))
+check('NaN coord rejected', not ValidatePortal(with('entrance', { x = 0/0, y = 0, z = 0, h = 0 })))
+check('non-table rejected', not ValidatePortal('x'))
+
 local path = arg[1]
 if path then
     local f = assert(io.open(path, 'r'))
